@@ -1,0 +1,178 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+import numpy as np
+import tensorflow as tf
+import cv2
+from os import listdir
+import math
+import random
+from tensorflow.python.saved_model import tag_constants
+from gensim.models.word2vec import Word2Vec as W2V
+from functools import reduce
+import operator
+import re
+
+fd = "/home/masteradamo/academy/data/OFAI/volds/"
+fs = "/home/masteradamo/academy/models/OFAIbots/dense/"
+fw = "/home/masteradamo/academy/data/OFAI/split/"
+
+labdi = {"PUT":0,"TAKE":1,"PUSH":2}
+
+stp = 10000
+#folds = 5
+hid = 100
+rep = 5
+cats = [1,2,3] #model objective index
+exts = [1,1,1] #how many instances of a given objective to model
+
+def folder(folds,n):
+    data,labs1,labs2,labs3,seqs = [],[],[],[],[]
+    for m in [x for x in range(n)] + [x for x in range(n+1,len(folds))]:
+        for name in listdir(fd+folds[m]):
+            stuff = open(fd+folds[m] + "/" + name,'r').readlines()
+#            data.append([[float(x) for x in y.split(",")[2:]] for y in stuff[6:]])
+            data.append([[[int(x) for x in y.split(",")] for y in z.split(";")] for z in stuff[6:]])
+#            labs.append([float(x) for x in stuff[2].split(": ")[1].split(",")])
+#            print("STUFF",stuff[3])
+            labs1.append([[float(x) for x in y.split(",")] for y in stuff[cats[0]].split(": ")[1].split(";")[:exts[0]]])
+            labs2.append([[float(x) for x in y.split(",")] for y in stuff[cats[1]].split(": ")[1].split(";")[:exts[1]]])
+            labs3.append([[float(x) for x in y.split(",")] for y in stuff[cats[2]].split(": ")[1].split(";")[:exts[2]]])
+            seqs.append(float(stuff[5].split(": ")[1]))
+    teata,tabs1,tabs2,tabs3,teeqs = [],[],[],[],[]
+    for name in listdir(fd+folds[n]):
+        stuff = open(fd+folds[n] + "/" + name,'r').readlines()
+#        teata.append([[float(x) for x in y.split(",")[2:]] for y in stuff[6:]])
+        teata.append([[[int(x) for x in y.split(",")] for y in z.split(";")] for z in stuff[6:]])
+#        tabs.append([float(x) for x in stuff[2].split(": ")[1].split(",")])
+        tabs1.append([[float(x) for x in y.split(",")] for y in stuff[cats[0]].split(": ")[1].split(";")[:exts[0]]])
+        tabs2.append([[float(x) for x in y.split(",")] for y in stuff[cats[1]].split(": ")[1].split(";")[:exts[1]]])
+        tabs3.append([[float(x) for x in y.split(",")] for y in stuff[cats[2]].split(": ")[1].split(";")[:exts[2]]])
+        teeqs.append(float(stuff[5].split(": ")[1]))
+    return data,labs1,labs2,labs3,seqs,teata,tabs1,tabs2,tabs3,teeqs
+
+def modeller(data,labs1,labs2,labs3,seqs,teata,tabs1,tabs2,tabs3,teeqs):
+    tf.reset_default_graph()
+#    inx = tf.placeholder(shape=[1,len(data[0]),len(data[0][0])],dtype=tf.float32,name="inx")
+    inx = tf.placeholder(shape=[len(data[0]),len(data[0][0]),len(data[0][0][0]),1],dtype=tf.float32,name="inx")
+    oux1 = tf.placeholder(shape=[len(labs1[0]),len(labs1[0][0])],dtype=tf.float32,name="oux1")
+    oux2 = tf.placeholder(shape=[len(labs2[0]),len(labs2[0][0])],dtype=tf.float32,name="oux2")
+    oux3 = tf.placeholder(shape=[len(labs3[0]),len(labs3[0][0])],dtype=tf.float32,name="oux3")
+    seq = tf.placeholder(shape=[1],dtype=tf.int32)
+    conv1 = tf.layers.conv2d(inputs=inx,filters=32,kernel_size=[5,5],padding="same",activation=tf.nn.relu)
+    pool1 = tf.layers.max_pooling2d(inputs=conv1,pool_size=[2,2],strides=2)
+    conv2 = tf.layers.conv2d(inputs=pool1,filters=64,kernel_size=[5,5],padding="same",activation=tf.nn.relu)
+    pool2 = tf.layers.max_pooling2d(inputs=conv2,pool_size=[2,2],strides=2)
+    flat = tf.reshape(pool2,[1,len(data[0]),-1])
+    lay1 = tf.nn.rnn_cell.LSTMCell(hid)
+    lay2 = tf.nn.rnn_cell.LSTMCell(rep)
+    multi = tf.nn.rnn_cell.MultiRNNCell([lay1,lay2])
+    deout,destate = tf.nn.dynamic_rnn(cell=multi,inputs=flat,dtype=tf.float32,sequence_length=seq)
+    dense1 = tf.layers.dense(tf.cast([deout[0][seq[0]-1]],dtype=tf.float32),units=len(labs1[0])*len(labs1[0][0]))
+    dense1 = tf.reshape(dense1,[len(labs1[0]),len(labs1[0][0])])
+    dense2 = tf.layers.dense(tf.cast([deout[0][seq[0]-1]],dtype=tf.float32),units=len(labs2[0])*len(labs2[0][0]))
+    dense2 = tf.reshape(dense2,[len(labs2[0]),len(labs2[0][0])])
+    mats = tf.cast([tf.layers.dense(dense2,units=len(labs3[0])*len(labs3[0][0])) for x in range(3)],dtype=tf.float32)
+    dense3 = tf.reshape(mats[tf.argmax(dense1[0])],[len(labs3[0]),len(labs3[0][0])])
+    soft1 = tf.nn.softmax(dense1)
+    soft2 = tf.nn.softmax(dense2)
+    soft3 = tf.nn.softmax(dense3)
+    loss1 = tf.losses.softmax_cross_entropy(onehot_labels=oux1,logits=dense1)
+    loss2 = tf.losses.softmax_cross_entropy(onehot_labels=oux2,logits=dense2)
+    loss3 = tf.losses.softmax_cross_entropy(onehot_labels=oux3,logits=dense3)
+    opti1 = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss1)
+    opti2 = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss2)
+    opti3 = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss3)
+    kick = tf.global_variables_initializer()
+    cnt = 0
+    hits = [0 for x in range(len(cats))]
+    with tf.Session() as sess:
+        sess.run(kick)
+        conv = [],[],[]
+        while cnt < stp:
+            cnt += 1
+            pt = random.randint(0,len(data)-1)
+            inp = [[[[float(x)/100] for x in y] for y in z] for z in data[pt]]
+            losses = [loss1,loss2,loss3]
+            optis = [opti1,opti2,opti3]
+            outs = [sess.run([losses[x],optis[x]],feed_dict={inx:inp,oux1:labs1[pt],oux2:labs2[pt],oux3:labs3[pt],seq:[seqs[pt]]}) for x in range(len(optis))]
+            for n in range(len(conv)):
+                conv[n].append(outs[n][0])
+            if cnt%(stp/100) == 0:
+                print(cnt,[np.mean(x) for x in conv])
+                conv = [],[],[]
+        print("MODEL BUILT")
+        labs = [labs1,labs2,labs3]
+        htals = [[0.0 for x in range(exts[y])] for y in range(len(cats))]
+        vtals,vs,vg = [[[0.0 for x in range(len(labs[y][0][0]))] for y in range(len(labs))] for z in range(3)]
+        win,wnt = 0,0
+        for n in range(len(teata)):
+            inp = [[[[float(x)/100] for x in y] for y in z] for z in teata[n]]
+            guess = [sess.run([x],feed_dict={inx:inp,oux1:tabs1[n],oux2:tabs2[n],oux3:tabs3[n],seq:[teeqs[n]]})[0] for x in [soft1,soft2,soft3]]
+            spts = [[list(guess[y][x]).index(max(guess[y][x])) for x in range(len(guess[y]))] for y in range(len(guess))]
+            tabs = [tabs1,tabs2,tabs3]
+            out = [[tabs[y][n][x][spts[y][x]] == 1 for x in range(len(guess[y]))] for y in range(len(guess))]
+            win += min([min(x) for x in out])==1
+            wnt += 1
+            htals = [[htals[y][x]+out[y][x] for x in range(len(out[y]))] for y in range(len(out))]
+            hits = [hits[x] + sum(out[x]) for x in range(len(out))]
+            for m in range(len(spts)):
+                for p in range(len(spts[m])):
+                    vtals[m][spts[m][p]] += out[m][p]
+                    vg[m][spts[m][p]] += 1
+#            print("TAB",tabs)
+            for m in range(len(tabs)):
+                for p in range(len(tabs[m][n])):
+                    vs[m][tabs[m][n][p].index(max(tabs[m][n][p]))] += 1
+#            hits += sum(out)
+        hacc = [[x/len(tabs[y]) for x in htals[y]] for y in range(len(htals))]
+        vprec = [[vtals[y][x]/max(1,vg[y][x]) for x in range(len(vtals[y]))] for y in range(len(vtals))]
+        vrec = [[vtals[y][x]/max(1,vs[y][x]) for x in range(len(vtals[y]))] for y in range(len(vtals))]
+        vfsc = [[(2*vprec[y][x]*vrec[y][x])/max(1,(vprec[y][x]+vrec[y][x])) for x in range(len(vprec[y]))] for y in range(len(vprec))]
+        print("ACCURACY:",[hits[x]/(len(tabs[x])*len(tabs[x][0])) for x in range(len(tabs))])
+        print("ARITY ACCURACY:",hacc)
+        print("TYPE PREC:",vprec)
+        print("TYPE REC:",vrec)
+        print("TYPE F1:",vfsc)
+        print("WON",win/wnt)
+        return hits,htals,[[len(tabs[y]) for x in htals[y]] for y in range(len(htals))],vtals,vg,vs,win,wnt
+
+def runner():
+    thits = [0 for x in range(len(cats))]
+    tcnt = [0 for x in range(len(cats))]
+    tlib = [[] for x in range(len(cats))]
+    arihi,arict = [[[0.0 for x in range(exts[y])] for y in range(len(cats))] for z in range(2)]
+    typhi,typgu,typsh = [[[0.0 for x in range(len(open(fd+"fold-0/"+listdir(fd+"fold-0/")[0],'r').readlines()[cats[y]].split(": ")[1].split(";")[0].split(",")))] for y in range(len(cats))] for z in range(3)]
+    twin,twnt = 0,0
+    folds = listdir(fd)
+    print("TYPHI",typhi)
+    for n in range(len(folds)):
+        data,labs1,labs2,labs3,seqs,teata,tabs1,tabs2,tabs3,teeqs = folder(folds,n)
+#        print("LABS",labs3,len(labs3))
+        tabs = [tabs1,tabs2,tabs3]
+        print("BATCH",n+1,"OF",len(folds))
+        hits,htals,hct,vtals,vg,vs,win,wnt = modeller(data,labs1,labs2,labs3,seqs,teata,tabs1,tabs2,tabs3,teeqs)
+        arihi = [[arihi[y][x] + htals[y][x] for x in range(len(arihi[y]))] for y in range(len(arihi))]
+        arict = [[arict[y][x] + hct[y][x] for x in range(len(arict[y]))] for y in range(len(arict))]
+        typhi = [[typhi[y][x] + vtals[y][x] for x in range(len(typhi[y]))] for y in range(len(typhi))]
+        typgu = [[typgu[y][x] + vg[y][x] for x in range(len(typgu[y]))] for y in range(len(typgu))]
+        typsh = [[typsh[y][x] + vs[y][x] for x in range(len(typsh[y]))] for y in range(len(typsh))]
+        print(hits,[hits[x]/(len(tabs[x])*len(tabs[x][0])) for x in range(len(tabs))])
+        for n in range(len(tlib)):
+            tlib[n].append(hits[n]/(len(tabs[n])*len(tabs[n][0])))
+            thits[n] += hits[n]
+            tcnt[n] += len(tabs[n])*len(tabs[n][0])
+        twin += win
+        twnt += wnt
+    print()
+    print("TOTAL ACCURACY",[[thits[x]/tcnt[x],tlib[x]] for x in range(len(tlib))])
+    print("ARITY ACCURACY:",[["%.3f" % (arihi[y][x]/arict[y][x]) for x in range(len(arihi[y]))] for y in range(len(arihi))])
+    prec = [[typhi[y][x]/max(1,typgu[y][x]) for x in range(len(typhi[y]))] for y in range(len(typhi))]
+    rec = [[typhi[y][x]/max(1,typsh[y][x]) for x in range(len(typhi[y]))] for y in range(len(typhi))]
+    fsc = [[(2*prec[y][x]*rec[y][x])/max(1,(prec[y][x]+rec[y][x])) for x in range(len(prec[y]))] for y in range(len(prec))]
+    print("TYPE PREC:",[["%.3f" % x for x in prec[y]] for y in range(len(prec))])
+    print("TYPE REC:",[["%.3f" % x for x in rec[y]] for y in range(len(rec))])
+    print("TYPE F1:",[["%.3f" % x for x in fsc[y]] for y in range(len(fsc))])
+    print("WIN","%.3f" % (twin/twnt))
+
+runner()

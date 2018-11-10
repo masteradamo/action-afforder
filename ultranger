@@ -1,0 +1,154 @@
+import re
+import math
+
+fb = "/home/masteradamo/academy/data/OFAI/FredRun/WL_exp_6/events.tsv"
+fd = "/home/masteradamo/academy/data/OFAI/MergedData/"
+fl = "/home/masteradamo/academy/data/OFAI/words/"
+fw = "/home/masteradamo/academy/data/OFAI/phrases/"
+
+handi = {"Pringles":1.0,"Ketchup":2.0,"Teabox":3.0,"Ketchup|Teabox":4.0,"Pringles|Teabox":5.0,"Ketchup|Pringles":6.0}
+
+def stamper(time):
+#    print("TIME",time)
+    if(":") in time:
+#        print("TIME",time,float(time.split(":")[-1])+(float(time.split(":")[-2])*60))
+        return float(time.split(":")[-1])+(float(time.split(":")[-2])*60)
+    else:
+        return float(time)
+
+def correcter(words):
+#    print("CORRECTING",words)
+    for n in range(len(words)):
+        if "|" in words[n][0]:
+            tup = words[n][0].split("|")
+            spl = words[n][2]-((words[n][2]-words[n][1])/2)
+            words[n] = (tup[0],words[n][1],spl)
+            print("CORRECT",len(words),n,words[n])
+            words.insert(n+1,(tup[1],spl,words[n][2]))
+    return words
+
+def adjuster(data,span):
+#    rata = [[] for x in data]
+#    span = [math.floor(span[0]*20)/20,math.ceil(span[1]*20)/20]
+    span = [math.floor(min([x[0][0] for x in data if len(x) > 0])*20)/20,math.ceil(max([x[-1][1] for x in data if len(x) > 0])*20)/20]
+    print("SPAN",span)
+    rata = [[span[0]+(x/20)] for x in range(math.ceil((span[1]-span[0])*20+1))]
+    for n in range(len(data)):
+        for m in range(len(data[n])):
+            data[n][m][0] = max(span[0],(math.floor(data[n][m][0]*20))/20)
+            data[n][m][1] = min(span[1],(math.ceil(data[n][m][1]*20))/20)
+        data[n] = [x for x in data[n] if x[0] >= span[0] and x[1] <= span[1]]
+    for n in [0,1]:
+        if len(data[n]) > 0:
+            adda = []
+            for m in range(len(data[n])):
+                data[n][m][2] = handi[data[n][m][2]]
+            if data[n][0][0] != span[0]:
+                data[n].insert(0,[span[0],span[0]+0.05,0.0])
+            if data[n][-1][1] != span[1]:
+                print("APPEND")
+                data[n].append([span[1]-0.05,span[1],0.0])
+            for m in range(len(data[n])):
+                adda.append(data[n][m][2])
+                if data[n][m][1] - data[n][m][0] > 0.051:
+                    adda.extend([data[n][m][2] for x in range(int((data[n][m][1]-data[n][m][0])*20)-1)])
+                if m < len(data[n])-1:
+                    if data[n][m][2] == data[n][m+1][2]:
+                        adda.extend([data[n][m][2] for x in range(int((data[n][m+1][0]-data[n][m][1])*20)+1)])
+                    else:
+                        adda.extend([data[n][m][2]] + [0.0 for x in range(int((data[n][m+1][0]-data[n][m][1])*20)-1)] + [data[n][m+1][2]])
+        else:
+            adda = [0.0 for x in range(math.ceil((span[1]-span[0])*20+1))]
+        for m in range(len(rata)):
+            rata[m].append(adda[m])
+    for n in [2,3,4,5]:
+        if len(data[n]) > 0:
+            adda = []
+            data[n] = [x for x in data[n] if re.match("[-0-9]",x[2])]
+            for m in range(len(data[n])):
+                data[n][m][2] = [float(x) for x in data[n][m][2].split("|")]
+            if data[n][0][0] != span[0]:
+                data[n].insert(0,[span[0],span[0]+0.05,[0.0,0.0,0.0]])
+            if data[n][-1][1] != span[1]:
+                data[n].append([span[1]-0.05,span[1],[0.0,0.0,0.0]])
+            for m in range(len(data[n])):
+                adda.append(data[n][m][2])
+                if data[n][m][1] - data[n][m][0] > 0.051:
+                    adda.extend([data[n][m][2] for x in range(int((data[n][m][1]-data[n][m][0])*20)-1)])
+                if m < len(data[n])-1:
+                    if data[n][m][2] == data[n][m+1][2]:
+                        adda.extend([data[n][m][2] for x in range(int((data[n][m+1][0]-data[n][m][1])*20)+1)])
+                    else:
+                        steps = max(1,20*(data[n][m+1][0]-data[n][m][1]))
+                        difs = [(data[n][m][2][x]-data[n][m+1][2][x])/steps for x in range(len(data[n][m][2]))]
+                        signs = [x/abs(x) for x in difs]
+                        adda.extend([data[n][m][2]] + [[data[n][m][2][x]+(difs[x]*signs[x]*(y+1)) for x in range(len(data[n][m][2]))] for y in range(int((data[n][m+1][0]-data[n][m][1])*20)-1)] + [data[n][m+1][2]])
+            adda.append([0.0,0.0,0.0])
+        else:
+            adda = [[0.0,0.0,0.0] for x in range(math.ceil((span[1]-span[0])*20+1))]
+        print("LENS",n,len(rata),len(adda))
+        print("DATA",data[n])
+        for m in range(len(rata)):
+            rata[m].extend(adda[m])
+    return rata
+
+def timer(words,data,phrase,act,fina,relas):
+    span = [words[0][1],words[-1][2]]
+    data = adjuster(data,span)
+    print("DATA ADJUSTED")
+    for n in range(len(phrase)):
+        ftw = open(fw + fina + "-" + str(n) + ".txt",'w')
+        ftw.write("PHRASE: " + phrase[n])
+        ftw.write("ACT: " + act[n] + "\n")
+        cut = len(phrase[n].split())
+        print()
+        print("PHRASE",phrase[n][:-1])
+        comp = " ".join([x[0] for x in words[:cut]])
+        print("WORDS",comp)
+        if phrase[n][:-1] != comp:
+            print("PROBLEM!",len(phrase[n][:-1]),len(comp))
+        times = [words[0][1],words[cut-1][2]]
+        print("TIMES",times)
+#        data = adjuster(data,times)
+#        print("DATA ADJUSTED")
+        print("RELAS",relas)
+        relwri = [x[2] for x in relas if (x[0] >= times[0] and x[0] <= times[1]) or (x[1] >= times[0] and x[1] <= times[1])]
+        print("RELATE",relwri)
+        if len(relwri) > 0:
+            ftw.write("RELATION: " + "; ".join(relwri) + "\n")
+        else:
+            ftw.write("RELATION: NONE\n")
+        for item in data:
+#            if item[0] >= times[0] and item[0] <= times[1]:
+            if (item[0] >= times[0] and item[0] <= times[1]) or (item[1] >= times[0] and item[1] <= times[1]):
+                toput = [item[0],None]
+                for word in words[:cut]:
+                    if word[1] <= item[0] and word[2] >= item[0]:
+                        toput[1] = word[0]
+                toput.extend(item[1:])
+                ftw.write(",".join(["%.6f" % x for x in toput[:1]]) + "," + str(toput[1]) + "," + ",".join(["%.6f" % x for x in toput[2:]]) + "\n")
+        words = words[cut:]
+
+def aligner():
+    phrase,act = [],[]
+    for line in [x.split("\t") for x in open(fb,'r').readlines()]:
+#        print("LINE",line[0])
+        if re.match("### FILE:",line[0]):
+            if len(phrase)>0:
+#                data = adjuster(data)
+                timer(words,data,phrase,act,fina,relas)
+                phrase,act = [],[]
+            fina = line[0].split("/")[-1].split(".")[0]
+            take = open(fl+fina+".csv",'r').readlines()[1:]
+            words = [(x.split(",")[5],stamper(x.split(",")[0]),stamper(x.split(",")[1])) for x in take if len(x.split(",")[5]) > 0]
+            relas = [[stamper(x.split(",")[0]),stamper(x.split(",")[1]),x.split(",")[9]] for x in take if len(x.split(",")[9]) > 0]
+            words = correcter(words)
+            span = [words[0][0],words[-1][1]]
+            data = [[[stamper(x.split(",")[0]),stamper(x.split(",")[1]),x.split(",")[y]] for x in take if len(x.split(",")[y]) > 0 and x.split(",")[y] != "\n"] for y in [6,7,10,11,12,13]]
+#            data = [[stamper(x.split(",")[1])] + [float(y) for y in x.split(",")[2:]] for x in open(fd+fina+"Merged.csv",'r').readlines()[1:]]
+            print(line[0])
+        else:
+            phrase.append(line[2])
+            act.append(line[1])
+
+aligner()

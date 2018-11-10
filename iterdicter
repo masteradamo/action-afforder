@@ -1,0 +1,160 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+import numpy as np
+import tensorflow as tf
+import cv2
+from os import listdir
+import math
+import random
+from tensorflow.python.saved_model import tag_constants
+from gensim.models.word2vec import Word2Vec as W2V
+from functools import reduce
+import operator
+import re
+from collections import defaultdict as dd
+
+fd = "/home/masteradamo/academy/data/OFAI/folds/"
+fs = "/home/masteradamo/academy/models/OFAIbots/dense/"
+fw = "/home/masteradamo/academy/data/OFAI/split/"
+#fn = "/home/masteradamo/academy/data/OFAI/tallies.txt"
+
+labdi = {"PUT":0,"TAKE":1,"PUSH":2}
+
+stp = 100000
+#folds = 5
+hid = 100
+rep = 5
+#cat = 1 #model objective index
+#ext = 1 #how many instances of a given objective to model
+
+fn = "/home/masteradamo/academy/sultres/action/talliesOBJ" + str(stp) + "x" + str(rep) + ".txt"
+
+def folder(folds,n,cat,ext):
+    data,labs,seqs = [],[],[]
+    for m in [x for x in range(n)] + [x for x in range(n+1,len(folds))]:
+        for name in listdir(fd+folds[m]):
+            stuff = open(fd+folds[m] + "/" + name,'r').readlines()
+            data.append([[float(x) for x in y.split(",")[2:]] for y in stuff[6:]])
+            labs.append([[float(x) for x in y.split(",")] for y in stuff[cat].split(": ")[1].split(";")[:ext]])
+            seqs.append(float(stuff[5].split(": ")[1]))
+    teata,tabs,teeqs,names = [],[],[],[]
+    for name in listdir(fd+folds[n]):
+        stuff = open(fd+folds[n] + "/" + name,'r').readlines()
+        teata.append([[float(x) for x in y.split(",")[2:]] for y in stuff[6:]])
+        tabs.append([[float(x) for x in y.split(",")] for y in stuff[cat].split(": ")[1].split(";")[:ext]])
+        teeqs.append(float(stuff[5].split(": ")[1]))
+        names.append(name)
+    return data,labs,seqs,teata,tabs,teeqs,names
+
+def modeller(data,labs,seqs,teata,tabs,teeqs,names,scores,ext):
+    tf.reset_default_graph()
+    inx = tf.placeholder(shape=[1,len(data[0]),len(data[0][0])],dtype=tf.float32,name="inx")
+    oux = tf.placeholder(shape=[len(labs[0]),len(labs[0][0])],dtype=tf.float32,name="oux")
+    seq = tf.placeholder(shape=[1],dtype=tf.int32)
+#    layers = [tf.nn.rnn_cell.LSTMCell(x) for x in [len(labs[0])]]
+    lay1 = tf.nn.rnn_cell.LSTMCell(hid)
+    lay2 = tf.nn.rnn_cell.LSTMCell(rep)
+    multi = tf.nn.rnn_cell.MultiRNNCell([lay1,lay2])
+    deout,destate = tf.nn.dynamic_rnn(cell=multi,inputs=inx,dtype=tf.float32,sequence_length=seq)
+    dense = tf.layers.dense(tf.cast([deout[0][seq[0]-1]],dtype=tf.float32),units=len(labs[0])*len(labs[0][0]))
+    dense = tf.reshape(dense,[len(labs[0]),len(labs[0][0])])
+#    soft = tf.nn.softmax(deout[0][seq[0]-1])
+    soft = tf.nn.softmax(dense,name="soft")
+#    loss = tf.losses.softmax_cross_entropy(onehot_labels=oux,logits=[deout[0][seq[0]-1]])
+    loss = tf.losses.softmax_cross_entropy(onehot_labels=oux,logits=dense)
+    opti = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss)
+    kick = tf.global_variables_initializer()
+    cnt = 0
+    hits = 0
+    with tf.Session() as sess:
+        sess.run(kick)
+        conv = []
+        while cnt < stp:
+            cnt += 1
+            pt = random.randint(0,len(data)-1)
+#            print("SEQS",seqs[pt],cnt)
+            out = sess.run([loss,opti,soft],feed_dict={inx:[data[pt]],oux:labs[pt],seq:[seqs[pt]]})
+#            print(out[0],out[2])
+            conv.append(out[0])
+            if cnt%(stp/100) == 0:
+                print(cnt,np.mean(conv))
+                conv = []
+        print("MODEL BUILT")
+        htals = [0.0 for x in range(ext)]
+        vtals,vs,vg = [[0.0 for x in range(len(labs[0][0]))] for y in range(3)]
+        for n in range(len(teata)):
+            guess = sess.run([soft],feed_dict={inx:[teata[n]],oux:tabs[n],seq:[teeqs[n]]})[0]
+#            hits += tabs[n][list(guess).index(max(guess))] == 1
+#            hits += sum([tabs[n][x][list(guess[x]).index(max(guess[x]))] == 1 for x in range(len(guess))])
+            spts = [list(guess[x]).index(max(guess[x])) for x in range(len(guess))]
+            out = [tabs[n][x][spts[x]] == 1 for x in range(len(guess))]
+#            ftn.write(names[n] + ": " + ",".join([str(x) for x in spts]) + "\n")
+            htals = [htals[x]+out[x] for x in range(len(out))]
+#            print("SPOTS",spts,vtals)
+            for m in range(len(spts)):
+                vtals[spts[m]] += out[m]
+                vg[spts[m]] += 1
+            for m in range(len(tabs[n])):
+                vs[tabs[n][m].index(max(tabs[n][m]))] += 1
+            hits += sum(out)
+#            print("OUT",out)
+            scores[names[n]].extend(out)
+#            print("GUESS",guess,hits)
+        hacc = [x/len(tabs) for x in htals]
+        vprec = [vtals[x]/max(1,vg[x]) for x in range(len(vtals))]
+        vrec = [vtals[x]/max(1,vs[x]) for x in range(len(vtals))]
+        vfsc = [(2*vprec[x]*vrec[x])/max(0.001,(vprec[x]+vrec[x])) for x in range(len(vprec))]
+        print("ACCURACY:",hits/(len(tabs)*len(tabs[0])))
+        print("ARITY ACCURACY:",hacc)
+        print("TYPE PREC:",vprec)
+        print("TYPE REC:",vrec)
+        print("TYPE F1:",vfsc)
+        return hits,htals,[len(tabs) for x in htals],vtals,vg,vs,scores
+
+def runner(scores,cat,ext):
+    thits = 0
+    tcnt = 0
+    tlib = []
+    arihi,arict = [[0.0 for x in range(ext)] for y in range(2)]
+    typhi,typgu,typsh = [[0.0 for x in range(len(open(fd+"fold-0/"+listdir(fd+"fold-0/")[0],'r').readlines()[cat].split(": ")[1].split(";")[0].split(",")))] for y in range(3)]
+    folds = listdir(fd)
+    print("TYPHI",typhi)
+#    ftn = open(fn,'w')
+    for n in range(len(folds)):
+        data,labs,seqs,teata,tabs,teeqs,names = folder(folds,n,cat,ext)
+#        trata,trords,treqs,teata,teords,teeqs = folder(pads,targs,seqs,n)
+        print("BATCH",n+1,"OF",len(folds),"CAT",cat)
+#        print("TARGS",targs[n],len(targs[n]))
+        hits,htals,hct,vtals,vg,vs,scores = modeller(data,labs,seqs,teata,tabs,teeqs,names,scores,ext)
+        arihi = [arihi[x] + htals[x] for x in range(len(arihi))]
+        arict = [arict[x] + hct[x] for x in range(len(arict))]
+        typhi = [typhi[x] + vtals[x] for x in range(len(typhi))]
+        typgu = [typgu[x] + vg[x] for x in range(len(typgu))]
+        typsh = [typsh[x] + vs[x] for x in range(len(typsh))]
+        print(hits,hits/(len(tabs)*len(tabs[0])))
+        tlib.append(hits/(len(tabs)*len(tabs[0])))
+        thits += hits
+        tcnt += len(tabs)*len(tabs[0])
+    print("TOTAL ACCURACY",[thits/tcnt,tlib])
+    print("ARITY ACCURACY:",["%.3f" % (arihi[x]/arict[x]) for x in range(len(arihi))])
+    prec = [typhi[x]/max(0.001,typgu[x]) for x in range(len(typhi))]
+    rec = [typhi[x]/max(0.0011,typsh[x]) for x in range(len(typhi))]
+    fsc = [(2*prec[x]*rec[x])/max(0.001,(prec[x]+rec[x])) for x in range(len(prec))]
+    print("TYPE PREC:",["%.3f" % x for x in prec])
+    print("TYPE REC:",["%.3f" % x for x in rec])
+    print("TYPE F1:",["%.3f" % x for x in fsc])
+    print("SCORES",sum([min(scores[x])==1 for x in scores])/len(scores))
+#    ftn.write("\n".join([x + ": " + ",".join([str(y) for y in scores[x]]) for x in scores]))
+    return scores
+
+def cycler():
+    ftn = open(fn,'w')
+    scores = dd(list)
+    for cat in [1,2,3]:
+#        ext = (math.floor(cat/4)*2)+1
+        ext = 1
+        scores = runner(scores,cat,ext)
+    ftn.write("\n".join([x + ": " + ",".join([str(y) for y in scores[x]]) for x in scores]))
+
+cycler()
