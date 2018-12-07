@@ -1,0 +1,33 @@
+fp = "/home/masteradamo/academy/data/OFAI/phrases/"
+fv = "/home/masteradamo/academy/data/OFAI/vids/"
+fw = "/home/masteradamo/academy/data/OFAI/clips/"
+
+import cv2
+from os import listdir
+
+wd = 128
+ht = 48
+ms = 80
+
+def opener():
+    for name in listdir(fp):
+        print("DOING",name)
+        prelu = open(fp+name).readlines()[:3]
+        stuff = [[float(x.split(",")[0])*1000,x.split(",")[1]] for x in open(fp+name).readlines()[3:]]
+        ftw = open(fw+name,'w')
+        adds = []
+        vid = cv2.VideoCapture(fv+name.split("-")[0]+"HandsObjects_libm.avi")
+        vid.set(cv2.CAP_PROP_CONVERT_RGB,False)
+        stamp = vid.get(cv2.CAP_PROP_POS_MSEC)
+        suc = True
+        while suc:
+            suc,img = vid.read()
+            stamp = vid.get(cv2.CAP_PROP_POS_MSEC)
+#            print("STAMP",stamp,stuff[0][0],stuff[-1][0],type(stamp))
+            if stamp >= stuff[0][0] and stamp <= stuff[-1][0] and stamp%ms==0:
+#                print("HIT")
+                adds.append([[x[0] for x in y] for y in cv2.resize(img,(wd,ht))])
+        print("ADDS",len(adds),len(adds[0]),len(adds[0][0]))
+        ftw.write(prelu[0]+prelu[1]+prelu[2] + "\n".join([";".join([",".join([str(x) for x in y]) for y in z]) for z in adds]))
+
+opener()
