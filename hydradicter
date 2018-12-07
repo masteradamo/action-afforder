@@ -22,7 +22,7 @@ labdi = {"PUT":0,"TAKE":1,"PUSH":2}
 stp = 100000
 #folds = 5
 hid = 100
-rep = 100
+rep = 5
 cats = [1,2,3] #model objective index
 exts = [1,1,1] #how many instances of a given objective to model
 
@@ -73,8 +73,8 @@ def modeller(data,labs1,labs2,labs3,seqs,teata,tabs1,tabs2,tabs3,teeqs):
     loss2 = tf.losses.softmax_cross_entropy(onehot_labels=oux2,logits=dense2)
     loss3 = tf.losses.softmax_cross_entropy(onehot_labels=oux3,logits=dense3)
     opti1 = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss1)
-    opti2 = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss2)
-    opti3 = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss=loss3)
+    opti2 = tf.train.AdamOptimizer(learning_rate=0.002).minimize(loss=loss2)
+    opti3 = tf.train.AdamOptimizer(learning_rate=0.003).minimize(loss=loss3)
     kick = tf.global_variables_initializer()
     cnt = 0
     hits = [0 for x in range(len(cats))]
