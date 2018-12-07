@@ -1,0 +1,9 @@
+from os import listdir
+
+fd = "/home/masteradamo/academy/data/OFAI/phrases/"
+
+for name in listdir(fd):
+    stuff = open(fd+name,'r').readlines()
+    if ":" in stuff[2].split(": ")[1]:
+        if stuff[2].split(": ")[1].split(":")[1].split("=")[0] == "beyond":
+            print(name)
