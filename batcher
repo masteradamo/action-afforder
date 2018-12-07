@@ -1,0 +1,111 @@
+from os import listdir
+from os import mkdir
+import re
+import random
+import math
+
+fd = "/home/masteradamo/academy/data/OFAI/clips/"
+fs = "/home/masteradamo/academy/data/OFAI/volds/"
+
+actdi = {"PUT":0,"TAKE":1,"PUSH":2}
+objdi = {"NONE":0,"KETCHUP":1,"TEABOX":2,"TEAHORIZONTAL":2,"PRINGLES":3,"PRINGLE":3}
+#reldi = {"none":0,"behind":1,"nextto":2,"infrontof":3,"inbetween":4,"beyond":5}
+reldi = {"none":0,"behind":1,"nextto":2,"infrontof":3,"inbetween":4}
+
+folds = 5
+
+def shuffler(data,targs,objs,preps,relas,nomas,phras):
+    batch = [[] for x in range((max(targs)+1)*(max(preps)+1))]
+    for n in range(len(data)):
+        batch[targs[n]*len(reldi)+preps[n]].append([data[n],targs[n],objs[n],preps[n],relas[n],nomas[n],phras[n]])
+    outs = [[[] for y in range(7)] for x in range(folds)]
+    for n in range(len(batch)):
+        random.shuffle(batch[n])
+        cut = math.floor(len(batch[n])/folds)
+        rem = len(batch[n])%folds
+        print("CUT",cut,rem)
+        for m in range(folds):
+            for p in range(7):
+                print("FOLD",n,m,p,len(batch[n]))
+#                print("BATCH",batch[n][m*cut:(m+1)*cut])
+#                outs[m][p].extend(batch[n][p][m*cut:(m+1)*cut])
+                outs[m][p].extend([batch[n][x][p] for x in range(m*cut,(m+1)*cut)])
+#        for m in range(rem):
+        ra = [x for x in range(folds)]
+        random.shuffle(ra)
+        for m in range(rem):
+            for p in range(7):
+                outs[ra[m]][p].append(batch[n][-m-1][p])
+    return outs
+
+def importer():
+    tdict = {}
+    cdict = {"NULL":0}
+    data,targs,objs,preps,relas,nomas,phras = [],[],[],[],[],[],[]
+    dlen = 0
+    for name in listdir(fd):
+        print("DOING",name)
+        stuff = open(fd+name,'r').readlines()
+        if re.match("[A-Za-z]",stuff[1].split(": ")[1]):
+#            if stuff[2].split(": ")[1].split(":")[1].split("=")[0] in reldi:
+            nomas.append(name)
+            phras.append(stuff[0].split(": ")[1])
+            targs.append(actdi[stuff[1].split(": ")[1].split()[0]])
+            print("STUFF",stuff[0][:-1],stuff[1][:-1])
+#            objs.append([objdi[x] for x in stuff[1].split(": ")[1].split()[1:]])
+            objs.append([objdi[x] for x in stuff[1].split(": ")[1].split()[1:]])
+            if len(objs[-1]) < 3:
+                objs[-1].extend([0 for x in range(3-len(objs[-1]))])
+            if ":" in stuff[2].split(": ")[1]:
+                relt = stuff[2].split(": ")[1]
+                preps.append(reldi[relt.split(":")[1].split("=")[0]])
+                relas.append([objdi[relt.split(":")[0].upper()]] + [objdi[x.upper().strip("\n")] for x in relt.split(":")[1].split("=")[1].split("|")])
+                if len(relas[-1]) < 3:
+                    relas[-1].extend([0 for x in range(3-len(relas[-1]))])
+            else:
+                preps.append(0)
+                relas.append([0,0,0])
+#            data.append([[float(x) for x in y.split(",")[2:]] for y in stuff[3:]])
+            data.append(stuff[3:])
+            dlen = max(dlen,len(data[-1]))
+    print("TARGS",len(targs))
+    pdict = {0:0,1:0,2:0}
+    for item in targs:
+        pdict[item] += 1
+    rdict = {0:0,1:0,2:0,3:0,4:0,5:0}
+    for item in preps:
+        rdict[item] += 1
+    print("COUNTS",pdict)
+    print("RELS",rdict)
+    outs = shuffler(data,targs,objs,preps,relas,nomas,phras)
+    print("DATA STRATIFIED")
+    print("OUTS",outs[0][2])
+    seqs = [[len(x) for x in y[0]] for y in outs]
+#    dads = [[x + ["-,-," + ",".join(["0.000000" for y in range(len(data[0][0].split(",")[2:]))]) + "\n" for w in range(dlen-len(x))] for x in z[0]] for z in outs]
+    dads = [[x + [",".join(["0.000000" for y in range(len(data[0][0].split(",")[2:]))]) + "\n" for w in range(dlen-len(x))] for x in z[0]] for z in outs]
+    tads = [[[0.0 for x in range(y)] + [1.0] + [0.0 for x in range(len(actdi)-y-1)] for y in z[1]] for z in outs]
+    oads = [[[[0.0 for x in range(y)] + [1.0] + [0.0 for x in range(4-y-1)] for y in z] for z in w[2]] for w in outs]
+    poads = [[[0.0 for x in range(y)] + [1.0] + [0.0 for x in range(len(reldi)-y-1)] for y in z[3]] for z in outs]
+    roads = [[[[0.0 for x in range(y)] + [1.0] + [0.0 for x in range(4-y-1)] for y in z] for z in w[4]] for w in outs]
+    moads = [z[5] for z in outs]
+    hoads = [z[6] for z in outs]
+    print("OUTS",len(outs))
+    return dads,tads,oads,poads,roads,seqs,moads,hoads
+
+def saver():
+    dads,tads,oads,poads,roads,seqs,nomas,phras = importer()
+    for n in range(folds):
+        di = fs+"fold-"+str(n)+"/"
+        mkdir(di)
+        for m in range(len(dads[n])):
+            ftw = open(di+nomas[n][m],'w')
+#            print("PHRASES",phras)
+            ftw.write("PHRASE: "+phras[n][m])
+            ftw.write("ACT: " + ",".join([str(x) for x in tads[n][m]]) + "\n")
+            ftw.write("OBJECTS: " + ";".join([",".join([str(x) for x in y]) for y in oads[n][m]]) + "\n")
+            ftw.write("RELATION: " + ",".join([str(x) for x in poads[n][m]]) + "\n")
+            ftw.write("ARRANGE: " + ";".join([",".join([str(x) for x in y]) for y in roads[n][m]]) + "\n")
+            ftw.write("LENGTH: " + str(seqs[n][m]) + "\n")
+            ftw.write("".join(dads[n][m]))
+
+saver()
